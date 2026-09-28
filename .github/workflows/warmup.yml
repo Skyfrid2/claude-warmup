@@ -10,51 +10,91 @@ concurrency:
 jobs:
   warmup:
     runs-on: ubuntu-latest
-    timeout-minutes: 2
+    timeout-minutes: 5
+
     steps:
       - name: Validate configuration
         env:
-          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_OAUTH_TOKEN }}
+          CLAUDE_TEAM_A_OAUTH_TOKEN: ${{ secrets.CLAUDE_TEAM_A_OAUTH_TOKEN }}
+          CLAUDE_TEAM_B_OAUTH_TOKEN: ${{ secrets.CLAUDE_TEAM_B_OAUTH_TOKEN }}
         run: |
-          if [ -z "${CLAUDE_CODE_OAUTH_TOKEN}" ]; then
-            echo "CLAUDE_OAUTH_TOKEN secret is not set."
-            echo "Add it in Settings > Secrets and variables > Actions."
+          if [ -z "${CLAUDE_TEAM_A_OAUTH_TOKEN}" ]; then
+            echo "CLAUDE_TEAM_A_OAUTH_TOKEN secret is not set."
+            exit 1
+          fi
+
+          if [ -z "${CLAUDE_TEAM_B_OAUTH_TOKEN}" ]; then
+            echo "CLAUDE_TEAM_B_OAUTH_TOKEN secret is not set."
             exit 1
           fi
 
       - name: Install Claude Code
         run: npm install -g @anthropic-ai/claude-code
 
-      - name: Ping Claude to anchor 5-hour window
+      - name: Warmup Organization A
         env:
-          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_OAUTH_TOKEN }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_TEAM_A_OAUTH_TOKEN }}
         run: |
           mkdir -p ~/.claude
           echo '{"hasCompletedOnboarding":true}' > ~/.claude.json
+
           output_file="$(mktemp)"
+
           set +e
           claude -p "hi" --model haiku --no-session-persistence >"$output_file" 2>&1
           status=$?
           set -e
+
           cat "$output_file"
 
           if [ $status -eq 0 ]; then
-            echo "Claude warmup request succeeded."
-            echo "✓ Warmup complete"
+            echo "✓ Organization A warmup succeeded."
             exit 0
           fi
 
           if grep -Eiq "expired|unauthorized|invalid token|authentication|auth failed|login required|not logged in" "$output_file"; then
-            echo "Claude token appears invalid or expired."
-            echo "Run 'claude setup-token' locally and update the CLAUDE_OAUTH_TOKEN GitHub secret."
+            echo "Organization A token appears invalid or expired."
             exit 1
           fi
 
           if grep -qi "rate limit" "$output_file"; then
-            echo "Claude reported a rate limit; treating as warmup success."
-            echo "✓ Warmup complete"
+            echo "Organization A reported a rate limit; treating as warmup success."
             exit 0
           fi
 
-          echo "Claude warmup failed with an unexpected error."
+          echo "Organization A warmup failed."
+          exit $status
+
+      - name: Warmup Organization B
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_TEAM_B_OAUTH_TOKEN }}
+        run: |
+          mkdir -p ~/.claude
+          echo '{"hasCompletedOnboarding":true}' > ~/.claude.json
+
+          output_file="$(mktemp)"
+
+          set +e
+          claude -p "hi" --model haiku --no-session-persistence >"$output_file" 2>&1
+          status=$?
+          set -e
+
+          cat "$output_file"
+
+          if [ $status -eq 0 ]; then
+            echo "✓ Organization B warmup succeeded."
+            exit 0
+          fi
+
+          if grep -Eiq "expired|unauthorized|invalid token|authentication|auth failed|login required|not logged in" "$output_file"; then
+            echo "Organization B token appears invalid or expired."
+            exit 1
+          fi
+
+          if grep -qi "rate limit" "$output_file"; then
+            echo "Organization B reported a rate limit; treating as warmup success."
+            exit 0
+          fi
+
+          echo "Organization B warmup failed."
           exit $status
